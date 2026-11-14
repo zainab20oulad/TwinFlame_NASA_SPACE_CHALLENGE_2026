@@ -152,6 +152,8 @@ def _validate(settings: Settings) -> None:
         raise ValueError(
             f"OUTPUT_FORMAT must be one of {sorted(VALID_OUTPUT_FORMATS)}, got {settings.output_format!r}"
         )
+    if not 1 <= settings.api_port <= 65535:
+        raise ValueError("API_PORT must be between 1 and 65535")
     if settings.batch_size <= 0:
         raise ValueError("BATCH_SIZE must be greater than 0")
     if settings.duckdb_threads <= 0:
