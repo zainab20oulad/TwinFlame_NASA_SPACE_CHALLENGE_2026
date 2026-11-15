@@ -21,6 +21,7 @@ from datetime import date as date_type
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import yaml
 
@@ -175,6 +176,21 @@ class FirmsApiConfig:
         The MAP_KEY is part of the URL path.
         Never log this URL without redaction.
         """
+
+        parsed_url = urlsplit(self.base_url)
+
+        if (
+            parsed_url.scheme.lower() != "https"
+            or not parsed_url.hostname
+            or parsed_url.username is not None
+            or parsed_url.password is not None
+            or parsed_url.query
+            or parsed_url.fragment
+        ):
+            raise ValueError(
+                "FIRMS base_url must be a valid HTTPS URL "
+                "without credentials, query, or fragment"
+            )
 
         if not self.map_key:
             raise RuntimeError(
