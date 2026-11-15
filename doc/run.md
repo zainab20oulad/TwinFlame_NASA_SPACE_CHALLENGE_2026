@@ -1,313 +1,195 @@
-# TwinFlame / PyroSync: demonstration runbook
-
-This runbook explains how to demonstrate the dashboard using the database in
-this checkout, and how to run the data pipeline from raw inputs through
-harmonization and optional live updates.
-
-## Before the demonstration: know what is available
-
-The checked-in application code does not include the local DuckDB database or
-the original raw archive. In the current working copy, the database is about
-500 MB and contains about 4.8 million standardized detections. There are raw
-API files, but no raw sample or archive files, and there are no validated
-Phase 08 harmonization outputs yet. Therefore:
-
-- You can demonstrate source-detection analysis now if the local database file
-  is present.
-- You cannot reproduce the full 4.8-million-record database from the currently
-  present raw files alone. Obtain the original approved archive inputs first.
-- Do not run the full rebuild against the only copy of
-  `database/twinflame.duckdb`. `scripts/run_pipeline.py` rebuilds the unified
-  detections from discovered raw inputs, so its output will reflect only the
-  inputs available in that run.
-- No harmonization matches, clusters, evaluation scores, or alerts are
-  fabricated. The dashboard should report those capabilities unavailable until
-  valid outputs and an alerting pipeline actually exist.
-
-Run all commands below from the repository root in Windows PowerShell unless a
-step says otherwise.
-
-## A. Fast dashboard demonstration with the current database
-
-### 1. Check the local inputs
-
-```powershell
-Test-Path .\database\twinflame.duckdb
-Get-Item .\database\twinflame.duckdb | Select-Object FullName,Length
-Get-ChildItem .\data\raw\api -Recurse -File | Measure-Object
-Get-ChildItem .\data\raw\sample,.\data\raw\archive -Recurse -File -ErrorAction SilentlyContinue | Measure-Object
-```
-
-The first command must return `True`. If the database is missing, obtain the
-authorized database file from your project data owner and place it at
-`database/twinflame.duckdb`. Do not replace it with the demo seeder or an empty
-database and then present the result as real observations.
-
-### 2. Configure and start Docker Compose
-
-Docker Desktop must be running. Create `.env` only if it does not already
-exist; preserve any existing settings and credentials.
-
-```powershell
-if (-not (Test-Path .env)) { Copy-Item .env.example .env }
-docker compose config --quiet
-docker compose up --build -d
-docker compose ps
-```
-
-Open `http://127.0.0.1:8080`. Compose serves the frontend through Nginx and
-routes its `/api/` requests to FastAPI. It also publishes the backend health
-endpoint on port 8000 for local development. If either port is already in use,
-set `FRONTEND_PORT` or `BACKEND_PORT` in `.env` and rerun `docker compose up -d`.
-
-### 3. Confirm that the app and database are connected
-
-```powershell
-Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8080/api/health
-Invoke-WebRequest -UseBasicParsing 'http://127.0.0.1:8080/api/overview?period=7d'
-```
-
-The health response should report `database: ok`, detections available, and
-harmonization unavailable if no valid Phase 08 output exists. The overview
-should return a nonzero detection total. In the current data snapshot, the
-independently checked seven-day total is 112,599; expect it to change as the
-data changes or filters change.
-
-### 4. Walk through the dashboard
-
-1. **Overview:** show source-detection totals, date/platform/region/day-night
-   filters, the filtered detection map, and UTC acquisition times. Harmonization
-   KPIs should be unavailable (`—`), not zero, while those outputs are missing.
-2. **Near Real-Time Monitoring and Geospatial Exploration:** show the filtered
-   observation views and explain that the detections are satellite observations,
-   not confirmed fire incidents.
-3. **Historical Fire Analysis, Sensor Comparison, Fire Season, and Quality &
-   Methodology:** demonstrate database-derived detection trends and data-quality
-   metrics. Explain each page's source and method when presenting its numbers.
-4. **Harmonization Evaluation:** show the explicit unavailable message until
-   valid Phase 08 output tables exist. Do not quote match rates or claim
-   harmonization success without that evidence.
-5. **Alerts Center:** show that alert records, alert map, and alert actions are
-   unavailable. TwinFlame does not currently provide live wildfire warnings.
-6. **Pipeline Management:** review the recorded ingestion and standardization
-   runs. A completed ingestion or processing record is not proof that Phase 08
-   harmonization completed.
-
-To inspect service logs while presenting, open another PowerShell window:
-
-```powershell
-docker compose logs -f backend frontend
-```
-
-## B. Full data pipeline demonstration
-
-Run this section only in a **separate working copy** with the complete approved
-raw archive and a backup of the source database. The pipeline is a data-writing
-workflow; the dashboard's Docker database mount is read-only, but that does not
-make the host-side pipeline scripts read-only.
-
-### 1. Prepare Python and the data inputs
-
-Install a supported Python version, then from the separate working copy:
-
-```powershell
-python --version
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-```
-
-If PowerShell blocks activation, allow it for this terminal and activate again:
-
-```powershell
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-.\.venv\Scripts\Activate.ps1
-```
-
-Place approved source CSVs under `data/raw/sample/` and
-`data/raw/archive/`. The pipeline recursively discovers CSVs there. API
-response Parquet belongs under `data/raw/api/`. Keep raw input files unchanged;
-do not place reports, review labels, or unrelated files in the input folders.
-If live NASA FIRMS ingestion is part of the demo, put your own key in the
-private `.env` as `FIRMS_MAP_KEY=...`; never commit or display the key.
-
-Before continuing, check the inputs and available disk space. If the full
-historical archive is unavailable, stop here rather than rebuilding the main
-database from only the current API files.
-
-### 2. Run the ingestion, cleaning, and standardization pipeline
-
-Stop any API ingestion process and close DuckDB CLI sessions first. Run the
-preflight:
-
-```powershell
-python scripts/run_pipeline.py --check-only
-```
-
-Confirm the discovered input count and file types are the intended complete
-dataset. A successful preflight checks for files and SQL stages; it does not
-prove the input data is complete or scientifically valid.
-
-Then run the rebuild in the separate working copy:
-
-```powershell
-python scripts/run_pipeline.py
-```
-
-The script cleans and validates discovered CSV/Parquet data, standardizes
-platforms and UTC acquisition timestamps, generates deterministic detection
-IDs, records input/processing metadata, and rebuilds
-`UNIFIED_DETECTIONS`. Wait for `PYROSYNC PIPELINE COMPLETED SUCCESSFULLY` and
-record the reported row count and output paths. If it fails, preserve the error
-and `logs/pipeline.log`; do not proceed to Phase 08 with a failed rebuild.
-
-### 3. Verify the rebuilt detection database
-
-If the DuckDB CLI is installed, run read-only checks:
-
-```powershell
-duckdb -readonly .\database\twinflame.duckdb
-```
-
-Then at the DuckDB prompt:
-
-```sql
-SHOW TABLES;
-DESCRIBE UNIFIED_DETECTIONS;
-SELECT COUNT(*) AS detections,
-       COUNT(DISTINCT detection_id) AS unique_ids,
-       MIN(acquisition_time_utc) AS first_time_utc,
-       MAX(acquisition_time_utc) AS last_time_utc
-FROM UNIFIED_DETECTIONS;
-SELECT platform, COUNT(*) AS detections
-FROM UNIFIED_DETECTIONS
-GROUP BY platform
-ORDER BY platform;
-.quit
-```
-
-Check that row count equals unique ID count, and compare dates/platform totals
-to the input coverage and pipeline report. Review cleaning and quarantine
-reports; quarantined records are not silently treated as valid detections.
-
-### 4. Audit source coverage before historical harmonization
-
-```powershell
-python scripts/run_phase_08_historical.py --audit-only
-```
-
-Review available dates, supported/unsupported platform counts, and coverage
-gaps. Phase 08 processes dates present in the database; it does not fill missing
-historical months. The configured method uses a 240-minute temporal window,
-1-km spatial threshold, and supported cross-platform pairs. Treat these as the
-implemented method, not proof that a match is a confirmed wildfire event.
-
-For a short rehearsal, you may run one available UTC date by adding
-`--start-date YYYY-MM-DD --end-date YYYY-MM-DD`. Clearly label this as a subset
-run; it is not full historical coverage.
-
-### 5. Run Phase 08 and inspect its outputs
-
-Stop API ingestion and close DuckDB sessions using either database. Then run:
-
-```powershell
-python scripts/run_phase_08_historical.py
-```
-
-Save the printed `run_id`. The outputs go under
-`data/processed/harmonization/phase_08/<run-id>/`, including the manifest,
-partitioned Parquet, and a separate `harmonization.duckdb`. Open the manifest
-and confirm its final status, failed-date count, and coverage gaps. A completed
-process with failed partitions or coverage gaps is not full successful
-coverage. Resume an interrupted run using its exact run ID:
-
-```powershell
-python scripts/run_phase_08_historical.py --run-id YOUR_RUN_ID
-python scripts/run_phase_08_historical.py --run-id YOUR_RUN_ID --retry-failed
-```
-
-Only present harmonization metrics when the output manifest and required
-harmonization tables have been validated.
-
-### 6. Optional scientific validation with independent references
-
-Phase 05 reference metrics require independently reviewed labels in
-`data/validation/candidate_recall_reference_pairs.csv` and/or
-`data/validation/activity_reference_labels.csv`. Add real review outcomes with
-reviewer, UTC timestamp, and evidence reference. Do not make labels from the
-algorithm's own candidate list and call them ground truth. Without valid
-reference data, report validation as skipped/unavailable; do not infer accuracy
-from the number of generated candidates.
-
-An optional review queue can be generated from a Phase 08 manifest:
-
-```powershell
-python scripts/create_phase05_review_queue.py --manifest .\data\processed\harmonization\phase_08\YOUR_RUN_ID\phase08_manifest.json
-```
-
-That queue contains candidates for human review; it is not ground truth by
-itself and cannot measure missed candidate pairs.
-
-### 7. Optional NASA FIRMS ingestion and Phase 09 updates
-
-Only after a successful Phase 08 baseline exists and a valid private
-`FIRMS_MAP_KEY` is configured, start the continuous ingestion process:
-
-```powershell
-python scripts/run_api_ingestion.py
-```
-
-Keep the terminal open to show request/import summaries and Phase 09 status.
-The process polls according to `config/sources.yaml`, stores API responses as
-raw Parquet, imports/deduplicates them into `UNIFIED_DETECTIONS`, then attempts
-incremental harmonization. `no_data` means no new eligible observations;
-`not_ready` means no suitable successful Phase 08 baseline; neither is a
-successful new harmonization batch. Press `Ctrl+C` to stop gracefully.
-
-If API files have already been downloaded and you want a one-off catch-up
-instead:
-
-```powershell
-python scripts/process_pending_api_files.py
-python scripts/run_phase_09_incremental.py --phase08-run-id YOUR_RUN_ID
-```
-
-Inspect the Phase 09 status/manifest and confirm the affected dates were
-successfully updated. Do not run Phase 09 concurrently with Phase 08 or while
-the dashboard is reading the same output database if DuckDB reports a lock.
-
-### 8. Start or refresh the dashboard against the results
-
-The current Compose setup mounts the detection database and Phase 08 output
-directory read-only into the backend. Make sure `.env` points
-`DUCKDB_HOST_PATH` at the rebuilt detection database and
-`HARMONIZATION_PHASE08_HOST_PATH` at the directory containing the validated
-Phase 08 run folders. Then:
-
-```powershell
-docker compose config --quiet
-docker compose up -d --build
-docker compose ps
-Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8080/api/health
-```
-
-Open `http://127.0.0.1:8080` and refresh the page. Verify that the health
-response and UI distinguish detections from harmonization outputs. If the
-Phase 08 run is valid, evaluation metrics should come from its real tables; if
-not, the dashboard must continue to show an unavailable state. Alerts remain
-unavailable until a real alert source and generation workflow are separately
-implemented and validated.
-
-## Stop the demonstration
-
-Stop continuous ingestion with `Ctrl+C`. Stop the dashboard containers while
-retaining the host data with:
-
-```powershell
-docker compose down
-```
-
-Do not use `docker compose down -v` as a routine cleanup command. Keep the
-database, raw inputs, Phase 08 run directory, manifests, and logs needed for
-review.
+<div align="center">TwinFlame
+Harmonizing global MODIS and VIIRS active-fire detections
+NASA Space Apps Challenge 2026 · Harmonization of MODIS and VIIRS Hot Spots
+
+A clearer way to compare satellite observations, understand fire activity, and inspect the evidence behind every correspondence.
+</div>Table of contents
+- Overview
+- Why TwinFlame
+- What it does
+- Data sources and satellite platforms
+- How the pipeline works
+- Harmonization methodology
+- Understanding the results
+- Dashboard
+- Technology stack
+- Data integrity and testing
+- Benefits and future direction
+- Running the pipeline
+Overview
+Wildfires reach far beyond the flames. They destroy homes and ecosystems, endanger lives, send smoke across regions, and carry significant economic costs. In a changing climate, hotter and drier fire-weather conditions are becoming more frequent in many parts of the world. They are among several factors—alongside vegetation, land use, and ignition sources—that shape fire behaviour.
+
+Satellites provide a global view of fire activity, but combining their observations is not straightforward. Different instruments have different spatial resolutions, viewing geometries, and overpass times. A hotspot detected by one instrument and a nearby hotspot detected by another may describe the same fire activity—or they may not.
+
+TwinFlame is a global satellite fire-detection harmonization and analysis platform. It brings observations from multiple satellite platforms into a consistent analytical workflow while preserving their original sensor information and making cross-sensor comparisons explainable.
+Why TwinFlame
+Comparing satellite detections using coordinates alone can lead to misleading conclusions. MODIS and VIIRS do not observe fires in exactly the same way, so a reliable comparison needs to consider more than whether two points are close together.
+
+TwinFlame addresses this challenge by combining:
+- Sensor-aware standardization while retaining native measurements and sensor identity.
+- Geometry-aware comparison using observation footprints, not only point coordinates.
+- Temporal analysis to assess whether observations occurred close enough in time.
+- Explainable correspondence classes so users can inspect why a candidate pair received its classification.
+- Spatio-temporal clustering to explore related observations as broader activity patterns.
+The central question is not simply “Are these hotspots close?” It is:
+Do observations from different instruments plausibly represent the same fire activity?
+
+What it does
+TwinFlame provides an end-to-end workflow that:
+1. Acquires active-fire observations from NASA FIRMS APIs and historical archive products.
+2. Validates incoming records and standardizes them into a common structure.
+3. Preserves each observation's original platform, sensor identity, and native measurements.
+4. Evaluates candidate correspondences between MODIS and VIIRS detections.
+5. Organizes related observations into broader spatio-temporal activity clusters.
+6. Presents the observations, comparisons, and processing evidence in an interactive dashboard.
+Data sources and satellite platforms
+The current source set covers four satellite platforms:
+Platform	Instrument	Approximate spatial resolution
+Terra	MODIS	1 km
+Aqua	MODIS	1 km
+NOAA-20	VIIRS	375 m
+NOAA-21	VIIRS	375 m
+
+
+Data are obtained from NASA Fire Information for Resource Management System (FIRMS) APIs and historical FIRMS archive files. The historical archive provides context for studying real observation patterns and assessing harmonization parameters and thresholds.
+
+Suomi-NPP is not included in the current source set. NOAA announced that delivery of new Suomi-NPP science data, including VIIRS, would end on 2 November 2026. Its historical observations remain archived, while NOAA-20 and NOAA-21 continue the VIIRS record.
+How the pipeline works
+Stage	What happens
+1. Acquire	Collect observations from NASA FIRMS APIs and historical archives.
+2. Standardize	Validate records and map them into a common structure while retaining native values.
+3. Harmonize	Evaluate spatial footprints, temporal proximity, and geometry quality.
+4. Cluster	Organize related detections into spatio-temporal activity clusters.
+5. Explore	Inspect observations, results, and evidence through the dashboard.
+
+
+TwinFlame uses a geometry-aware methodology. It considers differences in MODIS and VIIRS resolution and observation footprints, evaluates spatial and temporal correspondence together, and accounts for viewing geometry. Each candidate correspondence receives an explainable classification. Related observations can then be grouped into activity clusters, with the supporting evidence available for inspection.
+Harmonization methodology
+This is the central technical contribution of TwinFlame. MODIS and VIIRS differ in spatial resolution, viewing geometry, and acquisition time. Comparing detection coordinates alone can therefore produce misleading correspondences.
+
+TwinFlame evaluates multiple types of evidence for each candidate pair.
+1. Footprint overlap — Intersection over Union (IoU)
+The overlap between two observation footprints is measured using Intersection over Union:
+\[
+IoU(A,B)=\frac{|A\cap B|}{|A\cup B|}
+\]
+Where:
+- \(A\) and \(B\) are the two observation footprints.
+- The intersection is their shared area.
+- The union is the total area covered by both footprints.
+A higher IoU indicates stronger spatial overlap. An IoU ≥ 0.20 indicates a strong correspondence.
+2. Spatial distance — Haversine formula
+The separation between the two detection centroids is calculated as a great-circle distance:
+\[
+a=\sin^2\left(\frac{\Delta\phi}{2}\right)
++\cos(\phi_1)\cos(\phi_2)\sin^2\left(\frac{\Delta\lambda}{2}\right)
+\]
+\[
+d=2R\arcsin(\sqrt{a})
+\]
+Here, \(\phi_1\) and \(\phi_2\) are the latitudes in radians, \(\Delta\phi\) and \(\Delta\lambda\) are the latitude and longitude differences, and \(R\) is Earth's mean radius (approximately 6,371,000 m).
+
+A 3 km proximity threshold defines a possible correspondence.
+3. Temporal correspondence
+The acquisition times of the two observations are compared:
+\[
+\Delta t=|t_A-t_B|
+\]
+The temporal decision limit is 120 minutes. Candidate observations must be plausible in both space and time.
+4. Geometry quality
+A satellite's viewing angle affects the footprint it observes, with distortion increasing toward the edge of the swath.
+
+Cases with a scan angle greater than 55° are flagged as having insufficient geometry for a reliable correspondence decision.
+5. Correspondence classification
+Each candidate pair receives one of four explainable classes:
+Class	Interpretation
+Strong	Supported by sufficient footprint overlap (IoU ≥ 0.20).
+Possible	Spatially and temporally plausible, but without the same level of geometric evidence. This is not a confirmed match.
+Rejected	Fails the spatial or temporal criteria.
+Insufficient Geometry	The footprint geometry is not reliable enough for a confident decision.
+
+
+6. Activity clustering
+After correspondence analysis, related observations are organized into spatio-temporal activity clusters using DBSCAN:
+Parameter	Value
+Spatial epsilon	2.5 km
+Temporal epsilon	6 hours
+MinPts	1
+
+
+Clustering turns individual detections into broader fire-activity patterns that are easier to follow over time.
+Understanding the results
+Results should be interpreted with the characteristics and limitations of the instruments in mind:
+- A satellite detection is an observation, not necessarily a unique fire event.
+- MODIS and VIIRS confidence values use different scales and are not directly interchangeable.
+- FRP differences are interpreted in the context of each instrument; they are not automatic evidence against a correspondence.
+- Footprints used for overlap are screening envelopes built from each detection's scan and track dimensions, not exact pixel outlines.
+- A Possible correspondence is not a confirmed match.
+- TwinFlame does not predict fires or issue verified emergency warnings.
+Dashboard
+The dashboard is an analytical interface—not simply a fire map. It allows users to move from a global overview to the evidence behind an individual candidate correspondence.
+
+Open the TwinFlame dashboard
+Dashboard section	What it offers
+Overview & Live Monitoring	Filter observations by date, satellite, region, day/night, and FRP. Monitor incoming observations and distinguish satellite acquisition time from data retrieval time.
+Geospatial Exploration	Explore individual detections, activity-cluster extents and member observations, and spatial density patterns.
+Fire Season Monitor	Compare activity across years and months and explore seasonal patterns using platform, day/night, and other filters.
+Historical Fire Analysis	Examine long-term detection trends, FRP evolution, cluster counts and sizes, historical spatial distributions, and continent comparisons; export data.
+Sensor Comparison	Compare Terra, Aqua, NOAA-20, and NOAA-21 through detection counts and shares, FRP and brightness-temperature distributions, daily trends, diurnal patterns, and coincident-hotspot matching. Resolution differences must be considered when interpreting count differences.
+Harmonization Evaluation	Inspect correspondence classes, distance and time-difference distributions, IoU and containment, quality by satellite pair, and cluster composition.
+Candidate Edge Inspector	Compare two candidate detections side by side, inspect their attributes and spatial/temporal metrics, view their locations and correspondence line on a map, read the decision rationale, and export evidence to CSV or JSON.
+Quality & Methodology	Review data completeness, missing or invalid values, duplicates, quality by platform, source metadata, checksums, processing records, equations, thresholds, and assumptions.
+Pipeline Management	Review ingestion, standardization, and harmonization runs—including status, duration, record counts, source files, checksums, and versions—and dispatch controlled runs with configuration options and a dry-run setting.
+Alerts Center	Shows illustrative sample alerts to demonstrate the interface. These are not verified live alerts, and TwinFlame does not send emergency notifications.
+
+
+Why the Candidate Edge Inspector matters
+The Candidate Edge Inspector makes each correspondence open to verification. Instead of asking users to trust a match, it shows the two observations, their metrics, their map locations, and the rationale behind the assigned class.
+Technology stack
+Area	Technologies
+Programming languages	Python, SQL, JavaScript / TypeScript
+Data processing	Pandas, NumPy
+Data format	Parquet
+Analytical database	DuckDB
+Data acquisition	NASA FIRMS APIs and historical archive products
+Backend	FastAPI
+Frontend	React, Vite
+Geospatial visualization	Leaflet
+Mathematical rendering	KaTeX
+Version control and collaboration	Git, GitHub
+Environment and deployment	Docker
+Development hardware	Standard Windows-based development computers
+
+
+Data integrity and testing
+TwinFlame includes engineering measures designed to protect data integrity and keep processing results traceable:
+- SHA-256 checksums verify source-file integrity.
+- Input validation checks records before they enter the system.
+- Processing and ingestion records connect results to their source data.
+- Read-only dashboard data access helps protect the underlying analytical data.
+- Server-side mutex locking coordinates pipeline execution.
+- Controlled background tasks manage pipeline jobs.
+Testing has been carried out across data validation, processing, integrity, and application workflows. These safeguards do not constitute a formal security certification or an independent penetration test.
+Benefits and future direction
+TwinFlame aims to contribute to more coherent and interpretable satellite-based fire analysis:
+- More coherent monitoring: observations from four satellite platforms can be compared and explored in one workflow.
+- More careful correspondence analysis: footprint overlap, timing, and geometry quality help reduce misleading matches based only on coordinate proximity.
+- Stronger research capabilities: historical trends, seasonal patterns, and sensor comparisons support the investigation of fire activity.
+- A foundation for future research: the harmonized historical dataset could later be combined with weather, vegetation, land-cover, and other environmental variables to support fire-risk modelling.
+Objectives
+TwinFlame aims to:
+1. Provide a reusable global workflow for harmonizing multi-satellite active-fire observations.
+2. Improve the consistency and interpretability of cross-sensor observations.
+3. Support research into fire behaviour and long-term fire patterns.
+4. Establish a stronger data foundation for future fire-risk analysis and predictive research.
+Important scope note: Future predictive research is a potential direction, not a current TwinFlame capability. TwinFlame is an analysis platform; it does not currently predict fires or issue emergency warnings.
+▶ Running the pipeline
+Want to run the TwinFlame pipeline locally?
+
+Follow the step-by-step instructions in [`doc/run.md`](doc/run.md).
+
+That document is the guide for setting up the environment and running the pipeline. Refer to it before launching a pipeline run.
+<div align="center">TwinFlame · NASA Space Apps Challenge 2026
+
+Turning satellite detections into evidence you can explore.
+</div>
