@@ -1,133 +1,132 @@
 # TwinFlame_NASA_SPACE_CHALLENGE_2026
 Harmonization of MODIS and VIIRS Hot Spots
 
-## Dashboard
+DASHOBARD_URL: https://twin-flame-nasa-space-challenge-202.vercel.app/
+TwinFlame
+Harmonizing global MODIS and VIIRS active-fire detections
+Project description  •  NASA Space Apps Challenge 2026
+1. Why we chose this challenge
+Wildfires reach far beyond the flames. They destroy homes and ecosystems, endanger lives, send smoke across entire regions and carry heavy economic costs. In a changing climate, hotter and drier fire-weather conditions are becoming more frequent in many parts of the world. They are one of several factors, alongside vegetation, land use and ignition sources, that shape how fire behaves.
+Satellites give us the only truly global view of fire, but reading that view is harder than it looks. Four platforms (Terra, Aqua, NOAA-20 and NOAA-21) carry two different instruments, MODIS and VIIRS, which differ in spatial resolution, viewing geometry and the time of day they pass overhead. A hotspot reported by one instrument and a hotspot reported by another may describe the same fire activity, or they may not. Reliable monitoring and long-term research depend on knowing which.
+TwinFlame was built to help answer that question. It makes satellite fire observations more comparable, more coherent and easier to investigate.
+2. What TwinFlame does
+TwinFlame is a global satellite fire-detection harmonization and analysis platform. It:
+•	Acquires active-fire observations from NASA FIRMS.
+•	Standardizes them into a common structure while preserving each observation’s original sensor identity and native measurements.
+•	Evaluates possible correspondences between MODIS and VIIRS detections.
+•	Organizes related observations into broader spatio-temporal activity clusters.
+•	Presents the results in an interactive analytical dashboard.
 
-See [guide.md](guide.md) for the complete Windows runbook covering raw sample
-and archive data, cleaning, API ingestion, Phase 08/09, validation, and DuckDB
-inspection.
+TwinFlame does not simply merge nearby coordinates. It asks a harder question: do observations from different instruments plausibly represent the same fire activity?
+Satellites and data sources
+The current source set covers four platforms: Terra and Aqua (MODIS, about 1 km resolution) and NOAA-20 and NOAA-21 (VIIRS, about 375 m resolution). Data come from the NASA FIRMS APIs and from historical NASA FIRMS archive files. The archive is an important part of the project: it provided historical context and let us study real observation patterns when selecting and assessing harmonization parameters and thresholds.
+Suomi-NPP is not part of the current source set. NOAA announced that delivery of new Suomi-NPP science data, including VIIRS, would end on 2 November 2026 (NOAA NESDIS notice). Its historical observations remain archived, and NOAA-20 and NOAA-21 continue the VIIRS record.
+3. How it works
+1  Acquire
+NASA FIRMS APIs and archive	2  Standardize
+Common structure, native values kept	3  Harmonize
+Footprint, time and geometry evidence	4  Cluster
+Spatio-temporal activity	5  Explore
+Interactive dashboard
 
-The frontend is React + Vite and the API is read-only FastAPI. The ingestion
-pipeline writes `UNIFIED_DETECTIONS` to `database/twinflame.duckdb`; Phase 08/09
-write the `harm_*` tables to a separate run-specific DuckDB under
-`data/processed/harmonization/phase_08/<run-id>/harmonization.duckdb`. The
-backend currently has one `DUCKDB_PATH` setting, so it needs dual-database
-reading (or an explicit combined read-only snapshot) before all live ingestion
-and harmonization views can work together. The setup commands are in the guide;
-start the dashboard after that database wiring is in place.
+TwinFlame collects and validates FIRMS observations and standardizes their structure while keeping their original sensor information intact. It then applies a geometry-aware harmonization methodology. Rather than comparing coordinates alone, it takes into account the different pixel resolutions and observation footprints of MODIS and VIIRS, and evaluates spatial and temporal correspondence together. Off-nadir viewing and geometry quality are factored in, and every candidate correspondence receives an explainable classification. Related observations can then be organized into activity clusters, and all of this evidence stays open to inspection in the dashboard.
+4. Harmonization methodology
+This is the central technical contribution of TwinFlame. MODIS and VIIRS do not observe fires in the same way: they differ in spatial resolution, viewing geometry and acquisition time. Comparing detection coordinates alone can therefore produce misleading correspondences. TwinFlame evaluates richer spatial and temporal evidence for each candidate pair.
+4.1 Footprint overlap: Intersection over Union
+The overlap between the footprints of two observations is measured with Intersection over Union (IoU):
+IoU(A, B)  =  |A ∩ B|  /  |A ∪ B|
+Here A and B are the two observation footprints, the intersection is their shared area and the union is the total area they cover together. A higher IoU means stronger spatial overlap. An IoU ≥ 0.20 indicates a strong correspondence.
+4.2 Spatial distance
+The separation between the two centroids is measured as a great-circle (Haversine) distance:
+a  =  sin2(Δφ / 2)  +  cos φ1 • cos φ2 • sin2(Δλ / 2)
+d  =  2R • arcsin( √(a) )
+Here φ₁ and φ₂ are the latitudes in radians, Δφ and Δλ are the latitude and longitude differences, and R is Earth’s mean radius (about 6,371,000 m). A 3 km proximity threshold defines a possible correspondence.
+4.3 Temporal correspondence
+The acquisition times of the two satellites are compared:
+Δt  =  |tA − tB|
+The temporal decision limit is 120 minutes. Two observations are considered corresponding only if they are plausible both geographically and in time.
+4.4 Geometry quality
+A satellite’s viewing angle distorts the footprint it observes, and the distortion grows toward the edge of the swath. Cases with a scan angle beyond 55° are flagged as having insufficient geometry for a reliable correspondence decision.
+4.5 Correspondence classification
+Each candidate pair receives one of four explainable classes:
+Class	Meaning
+Strong	Supported by sufficient footprint overlap (IoU ≥ 0.20).
+Possible	Spatially and temporally plausible, but without the same level of geometric evidence. Not a confirmed match.
+Rejected	Fails the spatial or temporal criteria.
+Insufficient Geometry	The footprint geometry is not reliable enough for a confident decision.
 
-The Overview supports date range, satellite/platform, geographic region,
-day/night, and fire radiative power filters. A missing database or an
-incomplete pipeline schema is reported in the dashboard rather than replaced
-with sample values.
+4.6 Activity clustering
+After correspondence analysis, related observations are organized into spatio-temporal activity clusters with DBSCAN, using a spatial epsilon of 2.5 km, a temporal epsilon of 6 hours and MinPts = 1. Clusters turn individual detections into broader fire-activity patterns that are easier to follow over time.
+Reading the results correctly
+• A satellite detection is an observation, not necessarily a unique fire event.
+• MODIS and VIIRS confidence values use different scales and are not directly interchangeable.
+• FRP differences are interpreted in the context of the instruments and are not treated as automatic evidence against a correspondence.
+• The footprints used for overlap are screening envelopes built from each detection’s scan and track dimensions, not exact pixel outlines.
+• TwinFlame does not predict fires and does not issue verified emergency warnings.
+5. What makes TwinFlame innovative and creative?
+TwinFlame brings cross-sensor comparison, footprint geometry, temporal analysis, explainability and historical exploration together in a single workflow. Five elements make that combination distinctive:
+1.	Geometry-aware harmonization. Instead of relying on nearby coordinates, TwinFlame evaluates actual footprint overlap through IoU, alongside centroid distance and timing.
+2.	Instrument-aware comparison. The method accounts for the different spatial resolutions and viewing geometries of MODIS and VIIRS.
+3.	Explainable decisions. Candidate pairs fall into meaningful classes, and users can inspect the evidence behind each decision instead of receiving unexplained matches.
+4.	From detections to activity. Correspondence evaluation is followed by spatio-temporal clustering, so fire activity can be explored at a broader scale.
+5.	Integrated and transparent. The methodology is connected to a dashboard that unites sensor comparison, historical analysis, quality auditing and direct inspection of candidate correspondences.
+6. Factors our team considered
+Building a trustworthy harmonization workflow meant weighing several scientific and practical factors:
+•	Instrument differences. MODIS (about 1 km) and VIIRS (about 375 m) differ in resolution, viewing geometry and overpass time, so detection counts and positions cannot be compared naively.
+•	Evidence beyond coordinates. Footprint overlap, time difference and geometry quality all matter, so correspondence is judged on several kinds of evidence together.
+•	Preserving native information. Each observation keeps its sensor identity and native values. MODIS and VIIRS confidence scales differ, and FRP is read in the context of the instrument.
+•	Careful interpretation. A detection is an observation, not necessarily a unique fire, and a possible correspondence is not a confirmed match. The results are labelled accordingly.
+•	Choice of data. FIRMS APIs provide current observations, while historical archive files gave real patterns for assessing thresholds. Suomi-NPP was left out because NOAA ended delivery of its new data.
+•	Transparency and integrity. Checksums, processing records and an inspectable decision rationale keep every result traceable and open to scrutiny.
+•	Responsible scope. TwinFlame is a research and analysis tool. It does not predict fires or issue emergency warnings, and the Alerts Center is purely illustrative.
+7. The TwinFlame dashboard
+The dashboard is an analytical interface, not simply a fire map. It lets users move from a global overview down to the evidence behind a single candidate correspondence.
+Page	What it offers
+Overview and Live Monitoring	Filter observations by date, satellite, region, day/night and FRP; monitor incoming observations and distinguish satellite acquisition time from data retrieval time.
+Geospatial Exploration	Explore individual detections, activity-cluster extents and member observations, and spatial density patterns.
+Fire Season Monitor	Compare activity across years and months and explore seasonal patterns, filtered by platform, day/night and other criteria.
+Historical Fire Analysis	Long-term detection trends, FRP evolution, cluster counts and sizes over time, historical spatial distributions and continent comparisons, with data export.
+Sensor Comparison	Compare Terra, Aqua, NOAA-20 and NOAA-21 through detection counts and shares, FRP and brightness-temperature distributions, daily trends, diurnal patterns and coincident-hotspot matching. MODIS (about 1 km) and VIIRS (about 375 m) resolution differences must be considered when reading count differences.
+Harmonization Evaluation	Strong, possible, rejected and insufficient-geometry correspondences; distance and time-difference distributions; IoU and containment; quality by satellite pair; cluster composition.
+Candidate Edge Inspector	Place two candidate detections side by side, compare platforms, times, coordinates, FRP and other attributes, view spatial and temporal metrics, see both on a map joined by a correspondence line, read the decision rationale and export the evidence to CSV or JSON.
+Quality & Methodology	Data-completeness indicators, missing or invalid values, duplicate records, quality by platform, source-file metadata, checksums and processing records, plus the equations, thresholds and assumptions.
+Pipeline Management	Review ingestion, standardization and harmonization runs (successes, failures, durations, record counts, source files, checksums, versions) and dispatch controlled harmonization runs with configuration options and a dry-run setting.
+Alerts Center	Presents illustrative sample alerts to show how such an interface could look. They are not verified live alerts, and TwinFlame does not send emergency notifications.
 
-The Live Monitoring page polls the read-only `/api/monitoring` endpoint every
-60 seconds and supports rolling or custom acquisition-time windows, platform,
-sensor, region, day/night, FRP, and available native-confidence/status filters.
-It reads detections from `UNIFIED_DETECTIONS`; `SOURCE_FILES` and
-`INGESTION_RUNS` provide the latest retrieval timestamp when they expose an
-explicit retrieval-time column. Acquisition time is the satellite observation
-time, while retrieval time is when TwinFlame collected the source data. If a
-database does not include confidence, status, or retrieval metadata, those
-fields are identified as unavailable rather than inferred.
+Why the Candidate Edge Inspector matters
+It turns every correspondence into something a user can verify. Rather than trusting a match, users see the two observations, the metrics, the map and the rationale behind the class that was assigned.
+8. Tools, languages, hardware and software
+Area	Technologies
+Programming languages	Python, SQL, JavaScript / TypeScript
+Data processing	Pandas, NumPy
+Data formats	Parquet
+Analytical database	DuckDB
+Data acquisition	NASA FIRMS APIs and historical archive products
+Backend	FastAPI
+Frontend	React, Vite
+Geospatial visualization	Leaflet
+Mathematical rendering	KaTeX
+Version control and collaboration	Git, GitHub
+Environment and deployment	Docker
+Hardware	Standard Windows-based development computers
 
-The Geospatial Exploration page joins `UNIFIED_DETECTIONS` to
-`harm_activity_clusters` and `harm_cluster_members` to show detections,
-activity-cluster extents, member observations, and a 0.5-degree density grid.
-Cluster extent and area are calculated from member coordinates as a bounding
-envelope when the database has no stored cluster geometry. Saved areas and map
-annotations are stored in browser local storage and remain available in that
-browser for later research sessions.
+9. Security, integrity and testing
+TwinFlame includes engineering measures that protect data integrity and keep every result traceable:
+•	SHA-256 checksums verify the integrity of source files.
+•	Input validation checks data before it enters the system.
+•	Processing and ingestion records make each result traceable to its source.
+•	Read-only data access for the dashboard.
+•	A server-side mutex lock coordinates pipeline execution, and pipeline jobs run as controlled background tasks.
 
-The Alerts Center currently presents a clearly labeled illustrative sample,
-not live alerts. Acknowledge and resolve actions are saved in that browser's
-local storage; they are not written to the read-only DuckDB database or sent
-through email/SMS. Sample map locations and historical counts are not real fire
-notifications. MODIS/VIIRS correspondence alone is not an alert condition, and
-satellite-observation alerts are not emergency warnings or predictions of
-danger to people.
-
-The Fire Season Monitor reads acquisition dates and FRP metrics from
-`UNIFIED_DETECTIONS`, and adds activity-cluster counts when
-`harm_activity_clusters` and `harm_cluster_members` are available. It supports
-year-over-year comparisons, month-by-year activity, sensor/platform and
-day/night filters, sensor-specific monthly comparisons, and researcher-defined
-month or season windows. Regional
-comparisons use the dashboard's approximate bounding boxes, not precise
-administrative or ecological boundaries; the dashboard does not impose a
-universal fire-season calendar.
-
-The Historical Fire Analysis page (`/api/historical-analysis` and `/api/historical-analysis/export`)
-provides multi-year exploratory analysis of long-term fire regime changes:
-- Long-term detection trend across platforms and sensors from `UNIFIED_DETECTIONS`.
-- Fire Radiative Power (FRP) evolution from `harm_sensor_activity_daily` (with automatic aggregation fallback to `UNIFIED_DETECTIONS`).
-- Historical cluster counts and cluster size evolution (small, medium, large, mega-clusters) from `harm_activity_clusters` and `harm_cluster_members`.
-- Historical spatial distribution map supporting individual detections, 2-degree spatial density grid cells, and activity clusters.
-- Continental historical comparisons across Africa, Asia, Europe, North America, Oceania, and South America.
-- Downloadable datasets with direct export to CSV, GeoJSON (for GIS workflows in QGIS and ArcGIS), and JSON.
-
-The Sensor Comparison page (`/api/sensor-comparison`) provides head-to-head empirical evaluation across satellite platforms:
-- Supported platforms: Terra (MODIS), Aqua (MODIS), NOAA-20 (VIIRS), and NOAA-21 (VIIRS).
-- Enforces selection of two distinct platforms (A and B) with automatic conflict prevention.
-- Prominently surfaces the scientific caution on detection count disparities vs. spatial resolution (375m VIIRS vs 1000m MODIS), overpass timing, and sensitivity thresholds.
-- Comparative visualizations: detection counts and relative share, FRP bracket distribution curves, synchronized daily trends, mean/median/peak FRP indicators, 4µm MWIR brightness temperature distributions, and 24-hour diurnal observation curves.
-- Coincident hotspot matching evaluating observation time offsets (Δt) and inter-centroid spatial proximity within researcher-configured temporal and spatial windows.
-- Database sources: `UNIFIED_DETECTIONS`, `harm_sensor_activity_daily`, and `harm_frp_comparisons`.
-
-The Harmonization Evaluation page (`/api/harmonization-evaluation`) evaluates the matching algorithm establishing correspondences between MODIS and VIIRS observations:
-- Answers the core methodology question: *How well does our harmonization methodology establish correspondences between MODIS and VIIRS observations?*
-- Summary KPIs: Total candidate pairs, Strong matches & rate, Possible matches & rate, Rejected candidates & rate, Insufficient geometry cases, Acceptance rate, Mean/Median spatial distance (km), Mean/Median time difference (minutes), Mean Intersection over Union (IoU), and Mean containment ratio.
-- Visualizations:
-  1. Decision distribution donut chart and breakdown table (Strong, Possible, Rejected, Insufficient Geometry) from `harm_correspondence_summary`.
-  2. Multi-series correspondence trend over time with superimposed Harmonization Acceptance Rate (%) curve.
-  3. Spatial distance distribution across distance brackets (<0.5km, 0.5-1km, 1-2km, 2-3km, 3-5km, ≥5km).
-  4. Temporal difference distribution across overpass coincidence brackets (0-15m, 15-30m, 30-60m, 60-120m, ≥120m).
-  5. Intersection over Union (IoU) distribution highlighting the critical ≥0.20 threshold.
-  6. Correspondence quality by platform pair stacked bars (Terra–NOAA-20, Aqua–NOAA-20, etc.) from `harm_correspondence_edges`.
-  7. Cluster membership composition analyzing cross-sensor synergy (MODIS + VIIRS) from `harm_activity_clusters` and `harm_cluster_members`.
-- Interactive Candidate Edge Inspector:
-  - Explores individual candidate correspondence edges with explainable AI rationale.
-  - Side-by-side detection inspection for Detection A and Detection B (satellite platform, sensor, acquisition timestamp, coordinates, FRP, confidence, day/night).
-  - Spatial and temporal alignment metrics: Euclidean separation distance (km), overpass time offset Δt (minutes), bounding box IoU, and centroid containment.
-  - Interactive Leaflet mini-map displaying paired detections as color-coded satellite markers connected by a dashed correspondence polyline.
-  - Direct CSV and JSON export for offline correspondence verification.
-- Specialized algorithm filters: Date range with presets, Platform pair selector, Decision class, Geometry quality, Time difference min/max, Centre distance min/max, IoU range min/max, Containment range min/max, Harmonization run ID, and Algorithm version.
-
-The Quality & Methodology page (`/api/quality-methodology`) provides comprehensive data quality auditing and full scientific methodology documentation:
-- **Part A: Data Quality & Ingestion Audit**:
-  - Top KPI hero cards: Overall Completeness Rating (%), Audited Detections, Invalid/Missing Coordinates, Invalid/Missing FRP, Duplicate Records, and Insufficient Geometry flags.
-  - Quality Defect Distribution: Horizontal bar visualization auditing 6 core anomaly vectors (missing values, invalid coordinates, duplicate detections, invalid FRP, invalid timestamps, insufficient geometry).
-  - Platform-Specific Completeness: Progress meters tracking ingestion integrity across Terra, Aqua, NOAA-20, and NOAA-21.
-  - Ingestion Catalogs: Audited records from `SOURCE_FILES` (with file IDs, hashes, retrieval times) and `PROCESSING_RUNS` (processing IDs, software versions, start times, execution statuses).
-  - Historical Validation Snapshots: Preserved audit reports from `DATA_QUALITY_REPORTS` (report ID, run ID, total records, defect counts, completeness score, and summary logs).
-  - Audit Export: Downloadable comprehensive CSV quality audit report.
-- **Part B: Scientific Methodology**:
-  - Sensor & Product Specifications: Deep dive comparison between MODIS (Terra/Aqua, 1km, 3.96µm/11.03µm, 2330km swath) and VIIRS (NOAA-20/21, 375m, 3.74µm/11.45µm, 3040km swath).
-  - Standardization Pipeline: 4-stage ingestion and transformation architecture (Raw Ingestion & Verification, Attribute & Schema Normalization, Spatial & Geometric Transformation, Radiometric Unit Alignment).
-  - Mathematical Equations: Geometric definitions rendered in KaTeX for Intersection over Union ($\text{IoU} = \frac{|A \cap B|}{|A \cup B|}$), Great-circle / Euclidean centroid distance ($d_c$), and Off-nadir scan expansion ($S(\theta)$).
-  - Correspondence Decision Matrix: Strict rule specifications for Strong ($\text{IoU} \ge 0.20$), Possible ($\le 3.0\text{ km}$ proximity), Rejected ($>3.0\text{ km}$ or $>120\text{ min}$), and Insufficient Geometry ($>55^\circ$ scan angle deformation).
-  - Clustering Algorithm: Multi-sensor spatio-temporal DBSCAN specification ($\epsilon_{\text{space}} = 2.5\text{ km}$, $\epsilon_{\text{time}} = 6\text{ hours}$, $\text{MinPts} = 1$).
-  - Assumptions & Sensor Limitations: Transparent accounting of parallax distortions, cloud/smoke obscuration, and fire temporal dynamics.
-  - Version History: Evolution changelog from v1.0 baseline through v2.5 harmonized polygon IoU.
-- Specialized Quality Filters: Date range, Satellite/Platform, Source file, Product version, Processing version, Quality status (EXCELLENT, NOMINAL, DEGRADED, ACTION_REQUIRED), Quality issue, and Processing run ID.
-- Database sources: `UNIFIED_DETECTIONS`, `SOURCE_FILES`, `PROCESSING_RUNS`, `harm_correspondence_edges`, `harm_run_metadata`, and `DATA_QUALITY_REPORTS`.
-
-The Pipeline Management page (`/api/pipeline-management`, `/api/pipeline/run`, and `/api/pipeline/runs/{run_id}`) provides complete technical operations and execution telemetry for platform administrators and researchers:
-- Answers the core technical question: *Is the data pipeline working correctly, and what happened during each execution?*
-- Top KPI Hero Cards: Total Pipeline Runs, Completed Executions, Failed Executions, Average Processing Duration (seconds), Input Records Audited, and Harmonized Clusters Generated.
-- Stage Reliability Cards: Progress meters and execution metrics broken down across Ingestion, Standardization, and Harmonization stages.
-- Visualizations:
-  1. *Execution Duration Trend*: Multi-series area chart tracking runtime duration across historical executions from `harm_run_metadata`.
-  2. *Data Transformation Funnel*: Multi-tier bar chart tracking the reduction ratio from Raw Input Detections $\rightarrow$ Coincident Candidates $\rightarrow$ Correspondence Edges $\rightarrow$ Activity Clusters.
-  3. *Stage Success/Failure Rates*: Health rates across pipeline stages.
-- Multi-Stage Telemetry Tabs:
-  1. *Harmonization Runs (`harm_run_metadata`)*: Run ID, algorithm version, configuration profile, duration, status, inputs, candidates, edges, clusters, and detailed inspection modal with failed stage and error summaries.
-  2. *Ingestion History (`INGESTION_RUNS`)*: Ingestion ID, source type (FIRMS API, Historical Archive, Sample), timestamps, durations, statuses, and linked source files count.
-  3. *Source Files Overview (`SOURCE_FILES`)*: File ID, filename, platform, product version, retrieval timestamp, and SHA-256 checksums.
-  4. *Processing Executions (`PROCESSING_RUNS`)*: Processing ID, input file ID, filename, platform, software version, start time, and status.
-- Secure Job Execution Engine:
-  - Interactive modal dialog to dispatch new harmonization runs with custom observation date ranges, configuration profiles (`cfg_spatiotemporal_iou_v25`, `cfg_strict_spatial_threshold`, `cfg_rapid_revisit_noaa`), algorithm versions, and a dry-run simulation toggle.
-  - Safeguarded by server-side mutex lock (`PIPELINE_MUTEX`), input validation, and asynchronous FastAPI `BackgroundTasks`.
-  - Real-time job polling via `/api/pipeline/runs/{run_id}`.
-- Specialized Operations Filters: Date range with presets, Ingestion type, Pipeline stage, Execution status, Satellite/Platform, Source file, Processing version, and Run ID search.
-- Database sources: `INGESTION_RUNS`, `SOURCE_FILES`, `PROCESSING_RUNS`, and `harm_run_metadata`.
+Testing has been carried out across the project’s data validation, processing, integrity and application workflows. These are engineering safeguards; they do not constitute a formal security certification or an independent penetration test.
+10. Benefits and expected impact
+•	More coherent fire monitoring. Observations from four satellites can be compared and explored together, instead of being treated as disconnected feeds.
+•	More reliable correspondence analysis. Footprint overlap, timing and geometry quality help reduce misleading matches based only on coordinate proximity.
+•	Better research capabilities. Historical trends, seasonal patterns and sensor comparisons help researchers investigate fire activity.
+•	A foundation for future prediction research. The harmonized historical dataset could later be combined with weather, vegetation, land-cover and other environmental variables to support fire-risk modelling. This is future potential: TwinFlame is not currently a fire-prediction system.
+11. Objectives and future ambitions
+TwinFlame aims to:
+•	Provide a reusable global workflow for harmonizing multi-satellite active-fire observations.
+•	Improve the consistency and interpretability of cross-sensor observations.
+•	Support research into fire behaviour and long-term fire patterns.
+•	Establish a stronger data foundation for future fire-risk analysis and predictive research.
