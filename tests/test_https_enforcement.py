@@ -1,4 +1,4 @@
-﻿import pytest
+import pytest
 
 from config.api_config import FirmsApiConfig, SensorSource
 
