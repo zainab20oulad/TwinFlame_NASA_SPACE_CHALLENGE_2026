@@ -84,3 +84,36 @@ def test_accepts_polygon_at_maximum_points():
 
     assert result["type"] == "polygon"
     assert len(result["points"]) == MAX_POLYGON_POINTS
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {
+            "type": "rectangle",
+            "south": "0); DROP TABLE unified_detections;--",
+            "west": -10,
+            "north": 10,
+            "east": 10,
+        },
+        {
+            "type": "circle",
+            "center": ["0); DROP TABLE unified_detections;--", -5],
+            "radius_km": 10,
+        },
+        {
+            "type": "polygon",
+            "points": [
+                [34, -5],
+                [35, "0); DROP TABLE unified_detections;--"],
+                [36, -5],
+            ],
+        },
+    ],
+)
+def test_parse_aoi_rejects_sql_injection_strings(payload):
+    aoi = json.dumps(payload)
+
+    with pytest.raises(HTTPException) as exc:
+        _parse_aoi(aoi)
+
+    assert exc.value.status_code == 422
